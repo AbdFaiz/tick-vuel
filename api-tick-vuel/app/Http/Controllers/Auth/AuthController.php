@@ -3,14 +3,49 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\RegisterStoreRequest;
 use App\Http\Resources\UserResource;
+use App\Models\User;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Throwable;
 
 class AuthController extends Controller
 {
+    public function register(RegisterStoreRequest $request) {
+        $data = $request->validated();
+
+        DB::beginTransaction();
+
+        try {
+            $user = new User;
+            $user->name = $data['name'];
+            $user->email = $data['email'];
+            $user->password = Hash::make($data['password']);
+            $user->save();
+
+            $token = $user->createToken('auth_token')->plainTextToken;  
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Register Success',
+                'data' => [
+                    'token' => $token,
+                    'user' => new UserResource($user)
+                ],
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function login(Request $request) {
         try {
             if(!Auth::attempt($request->only('email', 'password'))) {
@@ -31,6 +66,23 @@ class AuthController extends Controller
                 ]
             ], 200);
         } catch(Exception $e) {
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function logout(Request $request) {
+        try {
+            $user = Auth::user();
+            $user->currentAccessToken()->delete();
+
+            return response()->json([
+                'message' => 'Logout success',
+                'data' => null
+            ], 200);
+        } catch (Exception $e) {
             return response()->json([
                 'message' => 'Internal Server Error',
                 'error' => $e->getMessage()
