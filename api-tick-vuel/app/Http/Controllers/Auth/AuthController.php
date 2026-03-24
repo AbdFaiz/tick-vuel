@@ -27,7 +27,7 @@ class AuthController extends Controller
             $user->password = Hash::make($data['password']);
             $user->save();
 
-            $token = $user->createToken('auth_token')->plainTextToken;  
+            $token = $user->createToken('auth_token')->plainTextToken;
 
             DB::commit();
 
@@ -39,6 +39,7 @@ class AuthController extends Controller
                 ],
             ], 201);
         } catch (Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'message' => 'Internal Server Error',
                 'error' => $e->getMessage()
