@@ -17,7 +17,7 @@ return new class extends Migration
             $table->string('code')->unique();
             $table->string('title');
             $table->longText('description');
-            $table->enum('status', ['open', 'in_progress','rejected', 'resolved'])->default('open');
+            $table->enum('status', ['open', 'onprogress','rejected', 'resolved'])->default('open');
             $table->enum('priority', ['low', 'medium', 'high'])->default('medium');
             $table->timestamp('completed_at')->nullable();
             $table->timestamps();

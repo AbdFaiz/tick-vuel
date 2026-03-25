@@ -49,7 +49,7 @@ class AuthController extends Controller
 
     public function login(Request $request) {
         try {
-            if(!Auth::attempt($request->only('email', 'password'))) {
+            if(!Auth::guard('web')->attempt($request->only('email', 'password'))) {
                 return response()->json([
                     'message' => 'Unauthorized',
                     'data' => null

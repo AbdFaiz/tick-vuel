@@ -2,9 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\TicketReplyStoreRequest;
+use App\Http\Requests\TicketReplyUpdateRequest;
 use App\Http\Requests\TicketStoreRequest;
+use App\Http\Requests\TicketUpdateRequest;
+use App\Http\Resources\TicketReplyResource;
 use App\Http\Resources\TicketResource;
 use App\Models\Ticket;
+use App\Models\TicketReply;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,12 +22,19 @@ class TicketController extends Controller
      */
     public function index(Request $request)
     {
+        $user = auth()->user();
+
         try {
             $q = Ticket::query();
 
+            if($user->role == 'user') $q->where('user_id', $user->id);
+
             if($request->search) {
-                $q->where('title', 'like', '%'.$request->search.'%')
-                ->orWhere('description', 'like', '%'.$request->search.'%');
+                $q->where(function ($query) use ($request) {
+                    $query->where('title', 'like', '%'.$request->search.'%')
+                        ->orWhere('description', 'like', '%'.$request->search.'%')
+                        ->orWhere('code', 'like', '%'.$request->search.'%');
+                });
             }
 
             if($request->status) {
@@ -32,8 +44,6 @@ class TicketController extends Controller
             if($request->priority) {
                 $q->where('priority', $request->priority);
             }
-
-            if(auth()->user()->role == 'user') $q->where('user_id', auth()->user()->id);
 
             return response()->json([
                 'message' => 'Get All Tickets!',
@@ -60,6 +70,8 @@ class TicketController extends Controller
      */
     public function store(TicketStoreRequest $request)
     {
+        $user = auth()->user();
+
         // Generate ticket with STR if doesnt exists in db
         $tiCode = 'TIC-'.Str::random(10);
         while (Ticket::where('code', $tiCode)->exists()) {
@@ -72,11 +84,16 @@ class TicketController extends Controller
 
         try {
             $ticket = new Ticket;
-            $ticket->user_id = auth()->user()->id;
+            $ticket->user_id = $user->id;
             $ticket->code = $tiCode;
             $ticket->title = $data['title'];
             $ticket->description = $data['description'];
             $ticket->priority = $data['priority'];
+
+            if ($request->hasFile('attachment')) {
+                $ticket->attachment = $request->file('attachment')->store('attachments', 'public');
+            }
+
             $ticket->save();
 
             DB::commit();
@@ -97,15 +114,42 @@ class TicketController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show($code)
     {
-        //
+        $user = auth()->user();
+
+        try {
+            $ticket = Ticket::where('code', $code)->first();
+
+            if(!$ticket) {
+                return response()->json([
+                    'message' => 'Ticket not found',
+                ], 404);
+            }
+
+            if($user->role == 'user' && $ticket->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            return response()->json([
+                'message' => 'Get Ticket Detail!',
+                'data' => new TicketResource($ticket),
+            ], 200);
+        } catch (Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(string $id)
+    public function edit($code)
     {
         //
     }
@@ -113,16 +157,221 @@ class TicketController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, string $id)
+    public function update(TicketUpdateRequest $request, string $code)
     {
-        //
+        $user = auth()->user();
+        $data = $request->validated();
+
+        try {
+            $ticket = Ticket::where('code', $code)->first();
+
+            if (!$ticket) {
+                return response()->json([
+                    'message' => 'Ticket not found',
+                ], 404);
+            }
+
+            if ($user->role == 'user' && $ticket->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $ticket->update($data);
+
+            return response()->json([
+                'message' => 'Ticket updated successfully',
+                'data' => new TicketResource($ticket),
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Failed to update ticket',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(string $code)
     {
-        //
+        $user = auth()->user();
+
+        try {
+            $ticket = Ticket::where('code', $code)->first();
+
+            if (!$ticket) {
+                return response()->json([
+                    'message' => 'Ticket not found',
+                ], 404);
+            }
+
+            if ($user->role == 'user' && $ticket->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $ticket->delete();
+
+            return response()->json([
+                'message' => 'Ticket deleted successfully',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Failed to delete ticket',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /*
+    * Reply to the specified resource in storage.
+    */
+    public function storeReply(TicketReplyStoreRequest $request, $code)
+    {
+        $user = auth()->user();
+        $data = $request->validated();
+
+        DB::beginTransaction();
+
+        try {
+            $ticket = Ticket::where('code', $code)->first();
+
+            if(!$ticket) {
+                return response()->json([
+                    'message' => 'Ticket not found',
+                ], 404);
+            }
+
+            if($user->role == 'user' && $ticket->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $ticketReply = new TicketReply();
+            $ticketReply->ticket_id = $ticket->id;
+            $ticketReply->user_id = $user->id;
+            $ticketReply->content = $data['content'];
+
+            if ($request->hasFile('attachment')) {
+                $ticketReply->attachment = $request->file('attachment')->store('attachments', 'public');
+            }
+
+            $ticketReply->save();
+
+            if($user->role == 'admin') {
+                $ticket->status = $data['status'];
+                if($data['status'] == 'resolved') {
+                    $ticket->completed_at = now();
+                }
+                $ticket->save();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Reply added successfully',
+                'data' => new TicketReplyResource($ticketReply),
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /*
+    * Update the specified reply in storage.
+    */
+    public function updateReply(TicketReplyUpdateRequest $request, $id)
+    {
+        $user = auth()->user();
+        $data = $request->validated();
+
+        DB::beginTransaction();
+
+        try {
+            $ticketReply = TicketReply::find($id);
+
+            if (!$ticketReply) {
+                return response()->json([
+                    'message' => 'Reply not found',
+                ], 404);
+            }
+
+            if ($ticketReply->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $ticketReply->content = $data['content'];
+            $ticketReply->save();
+
+            if ($user->role == 'admin' && isset($data['status'])) {
+                $ticket = $ticketReply->ticket;
+                $ticket->status = $data['status'];
+                if ($data['status'] == 'resolved') {
+                    $ticket->completed_at = now();
+                } else {
+                    $ticket->completed_at = null;
+                }
+                $ticket->save();
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Reply updated successfully',
+                'data' => new TicketReplyResource($ticketReply),
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /*
+    * Remove the specified reply from storage.
+    */
+    public function destroyReply($id)
+    {
+        $user = auth()->user();
+
+        try {
+            $ticketReply = TicketReply::find($id);
+
+            if (!$ticketReply) {
+                return response()->json([
+                    'message' => 'Reply not found',
+                ], 404);
+            }
+
+            // User can delete their own reply, Admin can delete any reply
+            if ($user->role == 'user' && $ticketReply->user_id != $user->id) {
+                return response()->json([
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
+
+            $ticketReply->delete();
+
+            return response()->json([
+                'message' => 'Reply deleted successfully',
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Internal Server Error',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 }

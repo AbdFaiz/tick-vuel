@@ -22,7 +22,9 @@ class TicketResource extends JsonResource
             'description' => $this->description,
             'status' => $this->status,
             'priority' => $this->priority,
+            'attachment' => $this->attachment ? asset('storage/' . $this->attachment) : null,
             'completed_at' => $this->completed_at,
+            'ticket_replies' => TicketReplyResource::collection($this->ticketReplies),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
